@@ -142,10 +142,15 @@ function renderList() {
     const staying = w.entries.filter((e) => e === "s").length;
     const total = pending + moving + staying;
     const el = document.createElement("div");
-    el.className = "window-item" + (i === state.currentIndex ? " active" : "");
+    el.className = "window-item" + (i === state.currentIndex ? " active" : "") + (pending > 0 ? " pending" : "");
     el.innerHTML = `
       <div class="range">${state.absOrigin != null ? `${formatAbsDateTime(state.absOrigin + w.startSec)} - ${formatAbsDateTime(state.absOrigin + w.endSec)}` : `${secToHMS(w.startSec)} - ${secToHMS(w.endSec)}`}</div>
-      <div class="counts">P:${pending} M:${moving} S:${staying} All:${total}</div>
+      <div class="counts">
+        <span class="count p${pending > 0 ? ' alert' : ''}">P:${pending}</span>
+        <span class="count m">M:${moving}</span>
+        <span class="count s">S:${staying}</span>
+        <span class="count all">All:${total}</span>
+      </div>
     `;
     el.addEventListener("click", () => {
       state.currentIndex = i;
@@ -230,12 +235,20 @@ function exportCSV() {
     "date","window_start","window_end","total_unique","moving_count","staying_count","notes"
   ];
   const rows = [header.join(",")];
-  for (const w of state.windows) {
-    const pending = w.entries.filter((e) => e === "p").length;
-    if (pending > 0) {
-      alert("未確定の人数が残っています。すべて移動/滞留に振り分けてください。");
-      return;
+  // Check pending across all windows first and show detailed guidance
+  const pendingList = [];
+  state.windows.forEach((w, i) => {
+    const p = w.entries.filter((e) => e === 'p').length;
+    if (p > 0) {
+      pendingList.push({ index: i + 1, label: formatWindowLabel(w.startSec, w.endSec), count: p });
     }
+  });
+  if (pendingList.length) {
+    const lines = pendingList.map(x => `- ${x.index}: ${x.label} （未確定: ${x.count}）`).join("\n");
+    alert(`未確定の人数が残っています。\n以下のウィンドウを確認してください:\n${lines}`);
+    return;
+  }
+  for (const w of state.windows) {
     const moving = w.entries.filter((e) => e === "m").length;
     const staying = w.entries.filter((e) => e === "s").length;
     const total = moving + staying;
@@ -266,12 +279,20 @@ function exportCSV() {
 function exportDetailCSV() {
   const header = ["date","window_start","person_local_id","visible_sec","behavior","remarks"];
   const rows = [header.join(",")];
-  for (const w of state.windows) {
-    const pending = w.entries.filter((e) => e === "p").length;
-    if (pending > 0) {
-      alert("未確定の人数が残っています。すべて移動/滞留に振り分けてください。");
-      return;
+  // Check pending across all windows first and show detailed guidance
+  const pendingList = [];
+  state.windows.forEach((w, i) => {
+    const p = w.entries.filter((e) => e === 'p').length;
+    if (p > 0) {
+      pendingList.push({ index: i + 1, label: formatWindowLabel(w.startSec, w.endSec), count: p });
     }
+  });
+  if (pendingList.length) {
+    const lines = pendingList.map(x => `- ${x.index}: ${x.label} （未確定: ${x.count}）`).join("\n");
+    alert(`未確定の人数が残っています。\n以下のウィンドウを確認してください:\n${lines}`);
+    return;
+  }
+  for (const w of state.windows) {
     let idx = 1;
     w.entries.forEach((e) => {
       if (e === "m" || e === "s") {
@@ -596,6 +617,7 @@ function bindEvents() {
       state.windows = data.windows;
       state.currentIndex = data.currentIndex || 0;
       state.absOrigin = (typeof data.absOrigin === 'number') ? data.absOrigin : null;
+      if (typeof data.cameraNumber === 'number') state.cameraNumber = data.cameraNumber;
       $("#videoId").value = state.videoId;
       renderActive();
       alert("読み込みました。");
@@ -643,6 +665,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const addBtn = document.getElementById("addFilesBtn");
   const prevVideoBtn = document.getElementById("prevVideoBtn");
   const nextVideoBtn = document.getElementById("nextVideoBtn");
+  const cameraInput = document.getElementById("cameraNumber");
   const video = document.getElementById("videoEl");
   if (!fi || !video) return;
 
@@ -834,6 +857,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (prevVideoBtn) prevVideoBtn.addEventListener('click', () => updateVideoToIndex(state.currentFileIndex - 1));
   if (nextVideoBtn) nextVideoBtn.addEventListener('click', () => updateVideoToIndex(state.currentFileIndex + 1));
+  if (cameraInput) {
+    cameraInput.value = String(state.cameraNumber);
+    cameraInput.addEventListener('change', () => {
+      const v = parseInt(cameraInput.value, 10);
+      if (!Number.isFinite(v) || v <= 0) {
+        cameraInput.value = String(state.cameraNumber);
+        return;
+      }
+      state.cameraNumber = v;
+      saveToLocalStorage();
+    });
+  }
 });
 
 async function probeDurationViaServer(file) {

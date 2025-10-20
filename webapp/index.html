@@ -35,6 +35,10 @@
           JSON読込
           <input id="importJsonInput" type="file" accept="application/json" />
         </label>
+        <label>
+          カメラ
+          <input id="cameraNumber" type="number" min="1" step="1" value="9" style="width:64px" />
+        </label>
       </div>
       <p class="hint">動画を読み込むと、ファイル名から video_id、開始/終了を自動反映（`PYYMMDD_HHMMSS_HHMMSS.*` または `PYYMMDD-HHMMSS-HHMMSS.*` を優先。なければ動画長で終了を推定）。</p>
       <p class="hint">ショートカット: A=人数+1, M=未確定→移動, S=未確定→滞留, Z=取り消し, ←/→=前後, N=次のウィンドウ</p>

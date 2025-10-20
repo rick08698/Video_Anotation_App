@@ -85,6 +85,7 @@
 - 複数ファイルの場合: 複数選択に対応。すべての `P...` ファイルの最小開始〜最大終了の連続範囲で5分刻みのウィンドウを一括生成します。
   - 例: `P250901_120000_122959.mp4` と `P250901_123000_125959.mp4` を同時に選ぶ → `12:00:00〜12:59:59` の範囲でウィンドウ作成
 - CSV出力時は `window_start/window_end` を壁時計の `HH:MM:SS` で出力します（跨日をまたぐ場合は日付が変わりますが、CSVには時刻のみを出力）。
+ - カメラ番号: ツールバーの「カメラ」で番号指定（既定=9）。CSVには`camera`列として`notes/remarks`の直前に出力されます。
 
 注意:
 - ウィンドウは5分境界（オンタイム）に揃えて生成し、ファイル群で完全にカバーされていない枠は生成されません。
@@ -139,11 +140,11 @@
 
 **CSV出力（ガイド準拠）**
 - 集計CSV（1行=1ウィンドウ）
-  - ヘッダ: `date,window_start,window_end,total_unique,moving_count,staying_count,notes`
-  - 例行（実時間あり）: `2025-09-11,00:00,05:00,12,9,3,"雨で視界やや悪い"`
+  - ヘッダ: `date,window_start,window_end,total_unique,moving_count,staying_count,camera,notes`
+  - 例行（実時間あり）: `2025-09-11,00:00,05:00,12,9,3,9,"雨で視界やや悪い"`
   - 実時間（P形式）が無い場合は `date` は空欄になります。
 - 詳細CSV（任意の補助出力）
-  - ヘッダ: `date,window_start,person_local_id,visible_sec,behavior,remarks`
+  - ヘッダ: `date,window_start,person_local_id,visible_sec,behavior,camera,remarks`
   - `person_local_id` はウィンドウ内での連番（`p001` など）。`visible_sec` は空欄のまま補助列として出力。
 
 出力ファイル名
