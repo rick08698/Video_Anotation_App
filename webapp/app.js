@@ -200,6 +200,7 @@ function saveToLocalStorage() {
     windows: state.windows,
     currentIndex: state.currentIndex,
     absOrigin: state.absOrigin,
+    cameraNumber: state.cameraNumber,
   });
   localStorage.setItem(storageKey(), data);
 }
@@ -215,6 +216,7 @@ function loadFromLocalStorage() {
     state.windows = Array.isArray(data.windows) ? data.windows : [];
     state.currentIndex = data.currentIndex || 0;
     state.absOrigin = (typeof data.absOrigin === 'number') ? data.absOrigin : null;
+    if (typeof data.cameraNumber === 'number') state.cameraNumber = data.cameraNumber;
     $("#videoId").value = state.videoId;
     renderActive();
     return true;
@@ -232,7 +234,7 @@ function csvEscape(v) {
 
 function exportCSV() {
   const header = [
-    "date","window_start","window_end","total_unique","moving_count","staying_count","notes"
+    "date","window_start","window_end","total_unique","moving_count","staying_count","camera","notes"
   ];
   const rows = [header.join(",")];
   // Check pending across all windows first and show detailed guidance
@@ -259,6 +261,7 @@ function exportCSV() {
       total,
       moving,
       staying,
+      state.cameraNumber,
       w.notes || "",
     ].map(csvEscape).join(",");
     rows.push(row);
@@ -277,7 +280,7 @@ function exportCSV() {
 }
 
 function exportDetailCSV() {
-  const header = ["date","window_start","person_local_id","visible_sec","behavior","remarks"];
+  const header = ["date","window_start","person_local_id","visible_sec","behavior","camera","remarks"];
   const rows = [header.join(",")];
   // Check pending across all windows first and show detailed guidance
   const pendingList = [];
@@ -302,6 +305,7 @@ function exportDetailCSV() {
           `p${String(idx).padStart(3, "0")}`,
           "",
           e === "m" ? "moving" : "staying",
+          state.cameraNumber,
           "",
         ].map(csvEscape).join(",");
         rows.push(row);
@@ -594,6 +598,12 @@ function bindEvents() {
   $("#clearBtn").addEventListener("click", clearCurrent);
   $("#nextBtn").addEventListener("click", nextWindow);
   $("#prevBtn").addEventListener("click", prevWindow);
+
+  // Ensure camera input shows default on load
+  const camEl = document.getElementById('cameraNumber');
+  if (camEl && (!camEl.value || camEl.value === '')) {
+    camEl.value = String(state.cameraNumber);
+  }
 
   $("#notes").addEventListener("input", (e) => {
     if (!state.windows.length) return;
