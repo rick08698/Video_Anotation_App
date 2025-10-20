@@ -60,6 +60,14 @@ function absToHMS(absSec) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+function formatAbsDate(absSec) {
+  const d = new Date(absSec * 1000);
+  const y = d.getFullYear();
+  const mo = pad(d.getMonth() + 1);
+  const da = pad(d.getDate());
+  return `${y}-${mo}-${da}`;
+}
+
 // ---------- Filename parse helper ----------
 function parseP(name) {
   // Accept PYYMMDD[_-]HHMMSS[_-]HHMMSS anywhere (case-insensitive)
@@ -205,7 +213,7 @@ function csvEscape(v) {
 
 function exportCSV() {
   const header = [
-    "video_id","window_start","window_end","total_unique","moving_count","staying_count","notes"
+    "video_id","date","window_start","window_end","total_unique","moving_count","staying_count","notes"
   ];
   const rows = [header.join(",")];
   for (const w of state.windows) {
@@ -219,6 +227,7 @@ function exportCSV() {
     const total = moving + staying;
     const row = [
       state.videoId,
+      state.absOrigin != null ? formatAbsDate(state.absOrigin + w.startSec) : "",
       state.absOrigin != null ? absToHMS(state.absOrigin + w.startSec) : secToHMS(w.startSec),
       state.absOrigin != null ? absToHMS(state.absOrigin + w.endSec) : secToHMS(w.endSec),
       total,
@@ -233,7 +242,7 @@ function exportCSV() {
 }
 
 function exportDetailCSV() {
-  const header = ["video_id","window_start","person_local_id","visible_sec","behavior","remarks"];
+  const header = ["video_id","date","window_start","person_local_id","visible_sec","behavior","remarks"];
   const rows = [header.join(",")];
   for (const w of state.windows) {
     const pending = w.entries.filter((e) => e === "p").length;
@@ -246,6 +255,7 @@ function exportDetailCSV() {
       if (e === "m" || e === "s") {
         const row = [
           state.videoId,
+          state.absOrigin != null ? formatAbsDate(state.absOrigin + w.startSec) : "",
           state.absOrigin != null ? absToHMS(state.absOrigin + w.startSec) : secToHMS(w.startSec),
           `p${String(idx).padStart(3, "0")}`,
           "",
@@ -306,15 +316,71 @@ function buildWindowsFromAbsRange(startAbs, endAbs, minutes) {
   state.windowSeconds = step;
   state.absOrigin = startAbs;
   state.windows = [];
-  for (let t = startAbs; t < endAbs; t += step) {
-    const startRel = t - startAbs;
-    const endRel = Math.min(t + step, endAbs) - startAbs;
+
+  // Align to wall-clock on-time boundaries (local time) for the chosen step
+  const floorToBoundary = (ts) => {
+    const d = new Date(ts * 1000);
+    d.setSeconds(0, 0);
+    const m = d.getMinutes();
+    const rem = m % (step / 60);
+    d.setMinutes(m - rem);
+    return Math.floor(d.getTime() / 1000);
+  };
+  const ceilToBoundary = (ts) => {
+    const f = floorToBoundary(ts);
+    return f === ts ? f : f + step;
+  };
+
+  const alignedStart = ceilToBoundary(startAbs);
+  const alignedEnd = floorToBoundary(endAbs);
+  if (alignedStart >= alignedEnd) {
+    state.windows = [];
+    renderActive();
+    setStatus('この選択範囲にはオンタイム5分枠が含まれません。前後のファイルを追加してください。', 'warn');
+    return true;
+  }
+
+  // Build merged coverage from selected files (or single range)
+  const rawCov = Array.isArray(state.coverage) && state.coverage.length
+    ? state.coverage.slice()
+    : [{ startAbs, endAbs }];
+  rawCov.sort((a, b) => a.startAbs - b.startAbs);
+  const merged = [];
+  for (const seg of rawCov) {
+    if (!merged.length || seg.startAbs > merged[merged.length - 1].endAbs) {
+      merged.push({ startAbs: seg.startAbs, endAbs: seg.endAbs });
+    } else {
+      merged[merged.length - 1].endAbs = Math.max(merged[merged.length - 1].endAbs, seg.endAbs);
+    }
+  }
+  const isCovered = (a, b) => merged.some(seg => seg.startAbs <= a && b <= seg.endAbs);
+
+  const missing = [];
+  for (let t = alignedStart; t + step <= alignedEnd; t += step) {
+    const a = t;
+    const b = t + step;
+    if (!isCovered(a, b)) { missing.push([a, b]); continue; }
+    const startRel = a - startAbs;
+    const endRel = b - startAbs;
     state.windows.push({ startSec: startRel, endSec: endRel, entries: [], notes: "", history: [] });
   }
   state.currentIndex = 0;
   renderActive();
   saveToLocalStorage();
+  if (missing.length) {
+    // Show first few missing slots to prompt adding files
+    const ex = missing.slice(0, 3).map(([a,b]) => `${formatAbsDateTime(a)} – ${formatAbsDateTime(b)}`).join("\n");
+    const more = missing.length > 3 ? `\n…ほか ${missing.length - 3} 枠` : '';
+    setStatus(`オンタイム5分枠で未カバーの区間があります。\n以下の枠をカバーする前後のファイルを追加してください:\n${ex}${more}`, 'warn');
+  }
   return true;
+}
+
+function recomputeFromCoverage(minutes) {
+  if (!Array.isArray(state.coverage) || state.coverage.length === 0) return false;
+  const minStart = Math.min(...state.coverage.map(c => c.startAbs));
+  const maxEnd = Math.max(...state.coverage.map(c => c.endAbs));
+  return buildWindowsFromAbsRange(minStart, maxEnd, minutes);
 }
 
 function ensureWindowsOrGenerate() {

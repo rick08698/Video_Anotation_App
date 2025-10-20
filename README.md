@@ -145,10 +145,11 @@
 
 **CSV出力（ガイド準拠）**
 - 集計CSV（1行=1ウィンドウ）
-  - ヘッダ: `video_id,window_start,window_end,total_unique,moving_count,staying_count,notes`
-  - 例行: `park_2024-05-01_camA,00:00,05:00,12,9,3,"雨で視界やや悪い"`
+  - ヘッダ: `video_id,date,window_start,window_end,total_unique,moving_count,staying_count,notes`
+  - 例行（実時間あり）: `park_2024-05-01_camA,2025-09-11,00:00,05:00,12,9,3,"雨で視界やや悪い"`
+  - 実時間（P形式）が無い場合は `date` は空欄になります。
 - 詳細CSV（任意の補助出力）
-  - ヘッダ: `video_id,window_start,person_local_id,visible_sec,behavior,remarks`
+  - ヘッダ: `video_id,date,window_start,person_local_id,visible_sec,behavior,remarks`
   - `person_local_id` はウィンドウ内での連番（`p001` など）。`visible_sec` は空欄のまま補助列として出力。
 
 注意: 未確定の人数が残っているウィンドウがある場合、CSV出力はブロックされます（ガイドの `moving_count + staying_count == total_unique` を担保するため）。
