@@ -211,7 +211,6 @@ function loadFromLocalStorage() {
     state.currentIndex = data.currentIndex || 0;
     state.absOrigin = (typeof data.absOrigin === 'number') ? data.absOrigin : null;
     $("#videoId").value = state.videoId;
-    $("#windowMinutes").value = Math.max(1, Math.round(state.windowSeconds / 60));
     renderActive();
     return true;
   } catch (_) {
@@ -314,7 +313,7 @@ function generateWindows() {
   const vid = $("#videoId").value.trim();
   const start = parseHMS($("#startTime").value.trim());
   const end = parseHMS($("#endTime").value.trim());
-  const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
+  const minutes = Math.max(1, Math.round(state.windowSeconds / 60) || 5);
   if (!vid) {
     alert("video_id を入力してください。");
     return;
@@ -563,7 +562,6 @@ function prevWindow() {
 }
 
 function bindEvents() {
-  $("#generateBtn").addEventListener("click", generateWindows);
   // pending-first bindings
   $("#addPersonBtn").addEventListener("click", addPerson);
   $("#subPersonBtn").addEventListener("click", removePerson);
@@ -582,41 +580,7 @@ function bindEvents() {
     saveToLocalStorage();
   });
 
-  $("#saveLocalBtn").addEventListener("click", saveToLocalStorage);
-  $("#loadLocalBtn").addEventListener("click", () => {
-    const ok = loadFromLocalStorage();
-    if (!ok) alert("ローカル保存は見つかりませんでした。");
-  });
-  $("#saveServerBtn").addEventListener("click", async () => {
-    if (!state.videoId) { alert("video_id を入力してください。"); return; }
-    try {
-      const payload = { videoId: state.videoId, windowSeconds: state.windowSeconds, windows: state.windows, currentIndex: state.currentIndex, absOrigin: state.absOrigin };
-      const res = await fetch("/api/annotations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error("save failed");
-      alert("サーバに保存しました。");
-    } catch (e) {
-      alert("サーバ保存に失敗しました。server.py を起動していますか？");
-    }
-  });
-  $("#loadServerBtn").addEventListener("click", async () => {
-    if (!state.videoId) { alert("video_id を入力してください。"); return; }
-    try {
-      const res = await fetch(`/api/annotations?video_id=${encodeURIComponent(state.videoId)}`);
-      if (!res.ok) throw new Error("load failed");
-      const data = await res.json();
-      if (!data || !Array.isArray(data.windows)) { alert("サーバにデータがありません。"); return; }
-      state.videoId = data.videoId || state.videoId;
-      state.windowSeconds = data.windowSeconds || state.windowSeconds;
-      state.windows = data.windows;
-      state.currentIndex = data.currentIndex || 0;
-       state.absOrigin = (typeof data.absOrigin === 'number') ? data.absOrigin : null;
-      $("#windowMinutes").value = Math.max(1, Math.round(state.windowSeconds / 60));
-      renderActive();
-      alert("サーバから読み込みました。");
-    } catch (e) {
-      alert("サーバ読込に失敗しました。server.py を起動していますか？");
-    }
-  });
+  // removed: local/server save/load buttons (not used in this workflow)
   $("#exportCsvBtn").addEventListener("click", exportCSV);
   $("#exportDetailCsvBtn").addEventListener("click", exportDetailCSV);
 
@@ -633,7 +597,6 @@ function bindEvents() {
       state.currentIndex = data.currentIndex || 0;
       state.absOrigin = (typeof data.absOrigin === 'number') ? data.absOrigin : null;
       $("#videoId").value = state.videoId;
-      $("#windowMinutes").value = Math.max(1, Math.round(state.windowSeconds / 60));
       renderActive();
       alert("読み込みました。");
     } catch (err) {
@@ -755,7 +718,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       // Confirm overwrite (after reflecting fields)
       if (state.windows.length && !confirm("既存のウィンドウを上書きして再生成しますか？")) return;
-      const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
+      const minutes = Math.max(1, Math.round(state.windowSeconds / 60) || 5);
       // coverage from all files to restrict generation to fully covered on-time slots
       state.coverage = metas.map(m => ({ startAbs: m.info.startAbs, endAbs: m.info.endAbs }));
       buildWindowsFromAbsRange(minStart, maxEnd, minutes);
@@ -780,7 +743,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setStatus('ファイル名から開始/終了を読み取りました。', 'info');
       // Build windows by absolute wall-clock range from filename
       if (state.windows.length && !confirm("既存のウィンドウを上書きして再生成しますか？")) return;
-      const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
+      const minutes = Math.max(1, Math.round(state.windowSeconds / 60) || 5);
       state.coverage = [{ startAbs: pm.startAbs, endAbs: pm.endAbs }];
       buildWindowsFromAbsRange(pm.startAbs, pm.endAbs, minutes);
       setStatus('ファイル名から開始/終了を読み取り、5分ウィンドウを生成しました。', 'info');
@@ -862,7 +825,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return a.name.localeCompare(b.name);
       });
       state.selectedFiles = merged;
-      const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
+      const minutes = Math.max(1, Math.round(state.windowSeconds / 60) || 5);
       recomputeFromCoverage(minutes);
       setStatus(`ファイルを追加しました（${files.length}件）。5分ウィンドウを再生成しました。`, 'info');
       fai.value = '';
