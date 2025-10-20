@@ -52,8 +52,13 @@
       <aside id="windowList" class="window-list"></aside>
       <section class="panel">
         <div class="video-preview">
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+            <button id="prevVideoBtn" title="前の動画へ">◀ 前の動画</button>
+            <button id="nextVideoBtn" title="次の動画へ">次の動画 ▶</button>
+          </div>
           <video id="videoEl" controls preload="metadata"></video>
           <div id="videoStatus" class="status"></div>
+          <div id="videoFileInfo" class="hint"></div>
         </div>
         <div class="window-header">
           <button id="prevBtn">← 前へ</button>

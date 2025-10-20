@@ -73,18 +73,19 @@
 
 ## 6. 出力フォーマット（CSV想定）
 ```csv
-video_id,window_start,window_end,total_unique,moving_count,staying_count,notes
-park_2024-05-01_camA,00:00,05:00,12,9,3,"雨で視界やや悪い"
-park_2024-05-01_camA,05:00,10:00,15,10,5,"ベンチ2組が滞留"
+date,window_start,window_end,total_unique,moving_count,staying_count,notes
+2025-09-11,00:00,05:00,12,9,3,"雨で視界やや悪い"
+2025-09-11,05:00,10:00,15,10,5,"ベンチ2組が滞留"
 ```
+- `date` はP形式（実時間）で作業した場合に付与（`YYYY-MM-DD`）。相対時間のみの場合は空欄。
 - `window_start` / `window_end` は `MM:SS` か `HH:MM:SS` で統一。
 - 1本の長尺動画を `video_id` で識別（`YYYY-MM-DD_camID` など、任意の一貫した命名）。
 
 > もし**人物別の詳細ログ**も残せる場合は、以下のような補助CSVを推奨：
 ```csv
-video_id,window_start,person_local_id,visible_sec,behavior,remarks
-park_2024-05-01_camA,00:00,p001,145,moving,"園路通過"
-park_2024-05-01_camA,00:00,p002,230,staying,"ベンチ座り"
+date,window_start,person_local_id,visible_sec,behavior,remarks
+2025-09-11,00:00,p001,145,moving,"園路通過"
+2025-09-11,00:00,p002,230,staying,"ベンチ座り"
 ```
 - `person_local_id` は**そのウィンドウ内だけで一意**ならOK（p001, p002, …）。
 

@@ -50,6 +50,7 @@
 - 2) 画面上部の「動画」からファイルを選択
   - `PYYMMDD_HHMMSS_HHMMSS.*` または `PYYMMDD-HHMMSS-HHMMSS.*` 形式なら開始/終了が自動反映、ウィンドウ自動生成（YYは2000年代の2桁年、例: 25→2025）
 - 追加のファイルがある場合は「ファイル追加」ボタンから後から追加可能（5分ウィンドウを再生成）
+  - 複数ファイルのプレビュー切替は「前の動画」「次の動画」ボタンで可能
   - それ以外はメタデータもしくはサーバ側`ffprobe`で長さ取得→開始`00:00:00`/終了に自動反映→ウィンドウ生成
 - 3) 人数カウントは「未確定」→「移動/滞留」の順で振り分け
   - `A`=人数（未確定）+1 → `M`=未確定→移動 → `S`=未確定→滞留
@@ -87,7 +88,8 @@
 - CSV出力時は `window_start/window_end` を壁時計の `HH:MM:SS` で出力します（跨日をまたぐ場合は日付が変わりますが、CSVには時刻のみを出力）。
 
 注意:
-- ウィンドウは5分刻みで開始し、端は動画の端で切り上げられます（例: 00:00–05:00, 05:00–10:00, …, 最後は10:00–10:10など）。
+- ウィンドウは5分境界（オンタイム）に揃えて生成し、ファイル群で完全にカバーされていない枠は生成されません。
+- 不足枠がある場合、ステータス欄に不足枠が一覧表示され、各枠の「この枠を追加」ボタンから手動で不足枠を挿入できます（任意）。
 
 注意:
 - 現状、複数ファイルを選んだ場合でも再生プレビューは先頭ファイルのみを表示します（ウィンドウは全範囲で生成されます）。
@@ -145,11 +147,17 @@
 
 **CSV出力（ガイド準拠）**
 - 集計CSV（1行=1ウィンドウ）
-  - ヘッダ: `video_id,window_start,window_end,total_unique,moving_count,staying_count,notes`
-  - 例行: `park_2024-05-01_camA,00:00,05:00,12,9,3,"雨で視界やや悪い"`
+  - ヘッダ: `date,window_start,window_end,total_unique,moving_count,staying_count,notes`
+  - 例行（実時間あり）: `2025-09-11,00:00,05:00,12,9,3,"雨で視界やや悪い"`
+  - 実時間（P形式）が無い場合は `date` は空欄になります。
 - 詳細CSV（任意の補助出力）
-  - ヘッダ: `video_id,window_start,person_local_id,visible_sec,behavior,remarks`
+  - ヘッダ: `date,window_start,person_local_id,visible_sec,behavior,remarks`
   - `person_local_id` はウィンドウ内での連番（`p001` など）。`visible_sec` は空欄のまま補助列として出力。
+
+出力ファイル名
+- 集計CSV: `YYYYMMDD_HHMMSS_HHMMSS.csv`（最初のウィンドウ開始のカレンダー日＋最初の開始時刻＋最後の終了時刻）
+- 詳細CSV: `YYYYMMDD_HHMMSS_HHMMSS_detail.csv`
+- 実時間が無い場合（相対時間のみ）は従来どおり `annotations.csv` / `annotations_detail.csv` のようなプレースホルダ名になります。
 
 注意: 未確定の人数が残っているウィンドウがある場合、CSV出力はブロックされます（ガイドの `moving_count + staying_count == total_unique` を担保するため）。
 
