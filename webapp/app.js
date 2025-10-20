@@ -60,6 +60,35 @@ function absToHMS(absSec) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+// ---------- Filename parse helper ----------
+function parseP(name) {
+  // Accept PYYMMDD[_-]HHMMSS[_-]HHMMSS anywhere (case-insensitive)
+  const m = /P(\d{2})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})/i.exec(name);
+  if (!m) return null;
+  const yy = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  const dd = parseInt(m[3], 10);
+  const sh = parseInt(m[4], 10);
+  const sm = parseInt(m[5], 10);
+  const ss = parseInt(m[6], 10);
+  const eh = parseInt(m[7], 10);
+  const em = parseInt(m[8], 10);
+  const es = parseInt(m[9], 10);
+  const y = 2000 + yy;
+  const mo = mm - 1;
+  const startDate = new Date(y, mo, dd, sh, sm, ss);
+  const endDate = new Date(y, mo, dd, eh, em, es);
+  if (endDate.getTime() <= startDate.getTime()) {
+    // midnight rollover support
+    endDate.setDate(endDate.getDate() + 1);
+  }
+  const startAbs = Math.floor(startDate.getTime() / 1000);
+  const endAbs = Math.floor(endDate.getTime() / 1000);
+  const startStr = `${pad(sh)}:${pad(sm)}:${pad(ss)}`;
+  const endStr = `${pad(eh)}:${pad(em)}:${pad(es)}`;
+  return { startAbs, endAbs, date: `${y}-${pad(mo+1)}-${pad(dd)}`, startStr, endStr };
+}
+
 function formatWindowLabel(startRel, endRel) {
   if (state.absOrigin != null) {
     const a = state.absOrigin + startRel;
@@ -272,31 +301,15 @@ function buildWindowsFromAbsRange(startAbs, endAbs, minutes) {
     alert("video_id を入力してください。");
     return false;
   }
-  const step = Math.max(1, minutes) * 60; // align to on-time grid of 'step' seconds (default 5min)
+  const step = Math.max(1, minutes) * 60;
   state.videoId = vid;
   state.windowSeconds = step;
   state.absOrigin = startAbs;
   state.windows = [];
-  // Align to exact on-time boundaries
-  const alignDown = (ts) => Math.floor(ts / step) * step;
-  const alignUp = (ts) => Math.ceil(ts / step) * step;
-  const alignedStart = alignUp(startAbs);
-  const alignedEnd = alignDown(endAbs);
-
-  // Generate only fully covered on-time windows
-  const cov = Array.isArray(state.coverage) ? state.coverage : [{ startAbs, endAbs }];
-  const isCovered = (a, b) => cov.some((c) => c.startAbs <= a && b <= c.endAbs);
-
-  for (let t = alignedStart; t + step <= alignedEnd; t += step) {
-    const a = t;
-    const b = t + step;
-    if (!isCovered(a, b)) continue; // skip if not fully covered by any file
-    const startRel = a - startAbs;
-    const endRel = b - startAbs;
+  for (let t = startAbs; t < endAbs; t += step) {
+    const startRel = t - startAbs;
+    const endRel = Math.min(t + step, endAbs) - startAbs;
     state.windows.push({ startSec: startRel, endSec: endRel, entries: [], notes: "", history: [] });
-  }
-  if (state.windows.length === 0) {
-    setStatus('オンタイム5分枠に完全一致する範囲が見つかりませんでした。前後のファイルを追加してカバーしてください。', 'warn');
   }
   state.currentIndex = 0;
   renderActive();
@@ -624,22 +637,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
       state.coverage = [{ startAbs: pm.startAbs, endAbs: pm.endAbs }];
       buildWindowsFromAbsRange(pm.startAbs, pm.endAbs, minutes);
-      // Warn if head/tail aligned 5-min slots are not fully covered by this single file
-      const step = minutes * 60;
-      const alignDown = (ts) => Math.floor(ts / step) * step;
-      const alignUp = (ts) => Math.ceil(ts / step) * step;
-      const prevStart = alignDown(pm.startAbs);
-      const nextEnd = alignUp(pm.endAbs);
-      const headMissing = pm.startAbs > prevStart;
-      const tailMissing = pm.endAbs < nextEnd;
-      if (headMissing || tailMissing) {
-        let msg = 'オンタイム5分スロットのみ生成しました。';
-        if (headMissing) msg += `\n先頭不足: ${formatAbsDateTime(prevStart)} – ${formatAbsDateTime(prevStart + step)} をカバーする前のファイルを追加してください。`;
-        if (tailMissing) msg += `\n末尾不足: ${formatAbsDateTime(nextEnd - step)} – ${formatAbsDateTime(nextEnd)} をカバーする次のファイルを追加してください。`;
-        setStatus(msg, 'warn');
-      } else {
-        setStatus('ファイル名から開始/終了を読み取り、オンタイム5分ウィンドウを生成しました。', 'info');
-      }
+      setStatus('ファイル名から開始/終了を読み取り、5分ウィンドウを生成しました。', 'info');
     } else {
       document.getElementById("startTime").value = "00:00:00";
       // Wait for metadata to set end time from duration
@@ -710,7 +708,7 @@ document.addEventListener("DOMContentLoaded", () => {
       state.coverage.push(...newCov);
       const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
       recomputeFromCoverage(minutes);
-      setStatus(`ファイルを追加しました（${files.length}件）。オンタイム枠を再生成しました。`, 'info');
+      setStatus(`ファイルを追加しました（${files.length}件）。5分ウィンドウを再生成しました。`, 'info');
       fai.value = '';
     });
   }
