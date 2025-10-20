@@ -10,6 +10,8 @@ const state = {
   currentIndex: 0,
   absOrigin: null, // number | null (epoch seconds). If set, windows are wall-clock based.
   coverage: null, // [{startAbs, endAbs}] from selected files when wall-clock mode
+  selectedFiles: [], // [{name,url,startAbs,endAbs}]
+  currentFileIndex: 0,
 };
 
 // ---------- UI helpers ----------
@@ -633,8 +635,46 @@ document.addEventListener("DOMContentLoaded", () => {
   const fi = document.getElementById("videoFileInput");
   const fai = document.getElementById("videoFileAddInput");
   const addBtn = document.getElementById("addFilesBtn");
+  const prevVideoBtn = document.getElementById("prevVideoBtn");
+  const nextVideoBtn = document.getElementById("nextVideoBtn");
   const video = document.getElementById("videoEl");
   if (!fi || !video) return;
+
+  function updateVideoToIndex(idx) {
+    if (!state.selectedFiles.length) return;
+    const i = Math.max(0, Math.min(idx, state.selectedFiles.length - 1));
+    state.currentFileIndex = i;
+    const cur = state.selectedFiles[i];
+    if (cur && cur.url) {
+      video.src = cur.url;
+      const info = document.getElementById('videoFileInfo');
+      if (info) {
+        const range = (cur.startAbs && cur.endAbs) ? `${formatAbsDateTime(cur.startAbs)} – ${formatAbsDateTime(cur.endAbs)}` : '';
+        info.textContent = `動画 ${i+1}/${state.selectedFiles.length}: ${cur.name}${range ? ` (${range})` : ''}`;
+      }
+    }
+    if (prevVideoBtn) prevVideoBtn.disabled = (i === 0);
+    if (nextVideoBtn) nextVideoBtn.disabled = (i === state.selectedFiles.length - 1);
+  }
+
+  function setSelectedFilesFromMetas(metas) {
+    // metas: [{file, info?}]
+    const arr = metas.map(m => {
+      const url = URL.createObjectURL(m.file);
+      const name = m.file.name;
+      const startAbs = m.info ? m.info.startAbs : null;
+      const endAbs = m.info ? m.info.endAbs : null;
+      return { name, url, startAbs, endAbs };
+    });
+    // sort by startAbs if available
+    arr.sort((a,b) => {
+      if (a.startAbs != null && b.startAbs != null) return a.startAbs - b.startAbs;
+      return a.name.localeCompare(b.name);
+    });
+    state.selectedFiles = arr;
+    state.currentFileIndex = 0;
+    updateVideoToIndex(0);
+  }
 
   fi.addEventListener("change", () => {
     const files = Array.from(fi.files || []);
@@ -656,10 +696,8 @@ document.addEventListener("DOMContentLoaded", () => {
       metas.sort((a,b) => a.info.startAbs - b.info.startAbs);
       const minStart = metas[0].info.startAbs;
       const maxEnd = metas[metas.length - 1].info.endAbs;
-
-      // Display first file immediately for preview
-      const url0 = URL.createObjectURL(metas[0].file);
-      video.src = url0;
+      // Store selected files and show the first
+      setSelectedFilesFromMetas(metas);
       // Reflect start/end fields from filenames immediately
       $("#startTime").value = metas[0].info.startStr;
       $("#endTime").value = metas[metas.length-1].info.endStr;
@@ -683,8 +721,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Single file mode
     const f = files[0];
-    const url = URL.createObjectURL(f);
-    video.src = url;
+    setSelectedFilesFromMetas([{ file: f, info: parseP(f.name) || null }]);
     let attemptedTranscode = false;
     setStatus(`動画を読み込みました: ${f.name}\nメタデータ取得を試行中…`, 'info');
 
@@ -765,19 +802,32 @@ document.addEventListener("DOMContentLoaded", () => {
       const files = Array.from(fai.files || []);
       if (!files.length) return;
       const newCov = [];
+      const metas = [];
       for (const f of files) {
         const info = parseP(f.name);
         if (!info) { alert(`ファイル名が PYYMMDD_HHMMSS_HHMMSS.*（またはハイフン区切り）形式ではありません: ${f.name}`); return; }
         newCov.push({ startAbs: info.startAbs, endAbs: info.endAbs });
+        metas.push({ file: f, info });
       }
       if (!Array.isArray(state.coverage)) state.coverage = [];
       state.coverage.push(...newCov);
+      // merge selected files list
+      const merged = state.selectedFiles.concat(metas.map(m => ({ name: m.file.name, url: URL.createObjectURL(m.file), startAbs: m.info.startAbs, endAbs: m.info.endAbs })));
+      // sort and de-dup by name+range
+      merged.sort((a,b) => {
+        if (a.startAbs != null && b.startAbs != null) return a.startAbs - b.startAbs;
+        return a.name.localeCompare(b.name);
+      });
+      state.selectedFiles = merged;
       const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
       recomputeFromCoverage(minutes);
       setStatus(`ファイルを追加しました（${files.length}件）。5分ウィンドウを再生成しました。`, 'info');
       fai.value = '';
     });
   }
+
+  if (prevVideoBtn) prevVideoBtn.addEventListener('click', () => updateVideoToIndex(state.currentFileIndex - 1));
+  if (nextVideoBtn) nextVideoBtn.addEventListener('click', () => updateVideoToIndex(state.currentFileIndex + 1));
 });
 
 async function probeDurationViaServer(file) {
