@@ -142,10 +142,15 @@ function renderList() {
     const staying = w.entries.filter((e) => e === "s").length;
     const total = pending + moving + staying;
     const el = document.createElement("div");
-    el.className = "window-item" + (i === state.currentIndex ? " active" : "");
+    el.className = "window-item" + (i === state.currentIndex ? " active" : "") + (pending > 0 ? " pending" : "");
     el.innerHTML = `
       <div class="range">${state.absOrigin != null ? `${formatAbsDateTime(state.absOrigin + w.startSec)} - ${formatAbsDateTime(state.absOrigin + w.endSec)}` : `${secToHMS(w.startSec)} - ${secToHMS(w.endSec)}`}</div>
-      <div class="counts">P:${pending} M:${moving} S:${staying} All:${total}</div>
+      <div class="counts">
+        <span class="count p${pending > 0 ? ' alert' : ''}">P:${pending}</span>
+        <span class="count m">M:${moving}</span>
+        <span class="count s">S:${staying}</span>
+        <span class="count all">All:${total}</span>
+      </div>
     `;
     el.addEventListener("click", () => {
       state.currentIndex = i;
@@ -195,6 +200,7 @@ function saveToLocalStorage() {
     windows: state.windows,
     currentIndex: state.currentIndex,
     absOrigin: state.absOrigin,
+    cameraNumber: state.cameraNumber,
   });
   localStorage.setItem(storageKey(), data);
 }
@@ -210,8 +216,8 @@ function loadFromLocalStorage() {
     state.windows = Array.isArray(data.windows) ? data.windows : [];
     state.currentIndex = data.currentIndex || 0;
     state.absOrigin = (typeof data.absOrigin === 'number') ? data.absOrigin : null;
+    if (typeof data.cameraNumber === 'number') state.cameraNumber = data.cameraNumber;
     $("#videoId").value = state.videoId;
-    $("#windowMinutes").value = Math.max(1, Math.round(state.windowSeconds / 60));
     renderActive();
     return true;
   } catch (_) {
@@ -228,15 +234,23 @@ function csvEscape(v) {
 
 function exportCSV() {
   const header = [
-    "date","window_start","window_end","total_unique","moving_count","staying_count","notes"
+    "date","window_start","window_end","total_unique","moving_count","staying_count","camera","notes"
   ];
   const rows = [header.join(",")];
-  for (const w of state.windows) {
-    const pending = w.entries.filter((e) => e === "p").length;
-    if (pending > 0) {
-      alert("未確定の人数が残っています。すべて移動/滞留に振り分けてください。");
-      return;
+  // Check pending across all windows first and show detailed guidance
+  const pendingList = [];
+  state.windows.forEach((w, i) => {
+    const p = w.entries.filter((e) => e === 'p').length;
+    if (p > 0) {
+      pendingList.push({ index: i + 1, label: formatWindowLabel(w.startSec, w.endSec), count: p });
     }
+  });
+  if (pendingList.length) {
+    const lines = pendingList.map(x => `- ${x.index}: ${x.label} （未確定: ${x.count}）`).join("\n");
+    alert(`未確定の人数が残っています。\n以下のウィンドウを確認してください:\n${lines}`);
+    return;
+  }
+  for (const w of state.windows) {
     const moving = w.entries.filter((e) => e === "m").length;
     const staying = w.entries.filter((e) => e === "s").length;
     const total = moving + staying;
@@ -247,6 +261,7 @@ function exportCSV() {
       total,
       moving,
       staying,
+      state.cameraNumber,
       w.notes || "",
     ].map(csvEscape).join(",");
     rows.push(row);
@@ -265,14 +280,22 @@ function exportCSV() {
 }
 
 function exportDetailCSV() {
-  const header = ["date","window_start","person_local_id","visible_sec","behavior","remarks"];
+  const header = ["date","window_start","person_local_id","visible_sec","behavior","camera","remarks"];
   const rows = [header.join(",")];
-  for (const w of state.windows) {
-    const pending = w.entries.filter((e) => e === "p").length;
-    if (pending > 0) {
-      alert("未確定の人数が残っています。すべて移動/滞留に振り分けてください。");
-      return;
+  // Check pending across all windows first and show detailed guidance
+  const pendingList = [];
+  state.windows.forEach((w, i) => {
+    const p = w.entries.filter((e) => e === 'p').length;
+    if (p > 0) {
+      pendingList.push({ index: i + 1, label: formatWindowLabel(w.startSec, w.endSec), count: p });
     }
+  });
+  if (pendingList.length) {
+    const lines = pendingList.map(x => `- ${x.index}: ${x.label} （未確定: ${x.count}）`).join("\n");
+    alert(`未確定の人数が残っています。\n以下のウィンドウを確認してください:\n${lines}`);
+    return;
+  }
+  for (const w of state.windows) {
     let idx = 1;
     w.entries.forEach((e) => {
       if (e === "m" || e === "s") {
@@ -282,6 +305,7 @@ function exportDetailCSV() {
           `p${String(idx).padStart(3, "0")}`,
           "",
           e === "m" ? "moving" : "staying",
+          state.cameraNumber,
           "",
         ].map(csvEscape).join(",");
         rows.push(row);
@@ -314,7 +338,7 @@ function generateWindows() {
   const vid = $("#videoId").value.trim();
   const start = parseHMS($("#startTime").value.trim());
   const end = parseHMS($("#endTime").value.trim());
-  const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
+  const minutes = Math.max(1, Math.round(state.windowSeconds / 60) || 5);
   if (!vid) {
     alert("video_id を入力してください。");
     return;
@@ -563,7 +587,6 @@ function prevWindow() {
 }
 
 function bindEvents() {
-  $("#generateBtn").addEventListener("click", generateWindows);
   // pending-first bindings
   $("#addPersonBtn").addEventListener("click", addPerson);
   $("#subPersonBtn").addEventListener("click", removePerson);
@@ -576,47 +599,19 @@ function bindEvents() {
   $("#nextBtn").addEventListener("click", nextWindow);
   $("#prevBtn").addEventListener("click", prevWindow);
 
+  // Ensure camera input shows default on load
+  const camEl = document.getElementById('cameraNumber');
+  if (camEl && (!camEl.value || camEl.value === '')) {
+    camEl.value = String(state.cameraNumber);
+  }
+
   $("#notes").addEventListener("input", (e) => {
     if (!state.windows.length) return;
     state.windows[state.currentIndex].notes = e.target.value;
     saveToLocalStorage();
   });
 
-  $("#saveLocalBtn").addEventListener("click", saveToLocalStorage);
-  $("#loadLocalBtn").addEventListener("click", () => {
-    const ok = loadFromLocalStorage();
-    if (!ok) alert("ローカル保存は見つかりませんでした。");
-  });
-  $("#saveServerBtn").addEventListener("click", async () => {
-    if (!state.videoId) { alert("video_id を入力してください。"); return; }
-    try {
-      const payload = { videoId: state.videoId, windowSeconds: state.windowSeconds, windows: state.windows, currentIndex: state.currentIndex, absOrigin: state.absOrigin };
-      const res = await fetch("/api/annotations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error("save failed");
-      alert("サーバに保存しました。");
-    } catch (e) {
-      alert("サーバ保存に失敗しました。server.py を起動していますか？");
-    }
-  });
-  $("#loadServerBtn").addEventListener("click", async () => {
-    if (!state.videoId) { alert("video_id を入力してください。"); return; }
-    try {
-      const res = await fetch(`/api/annotations?video_id=${encodeURIComponent(state.videoId)}`);
-      if (!res.ok) throw new Error("load failed");
-      const data = await res.json();
-      if (!data || !Array.isArray(data.windows)) { alert("サーバにデータがありません。"); return; }
-      state.videoId = data.videoId || state.videoId;
-      state.windowSeconds = data.windowSeconds || state.windowSeconds;
-      state.windows = data.windows;
-      state.currentIndex = data.currentIndex || 0;
-       state.absOrigin = (typeof data.absOrigin === 'number') ? data.absOrigin : null;
-      $("#windowMinutes").value = Math.max(1, Math.round(state.windowSeconds / 60));
-      renderActive();
-      alert("サーバから読み込みました。");
-    } catch (e) {
-      alert("サーバ読込に失敗しました。server.py を起動していますか？");
-    }
-  });
+  // removed: local/server save/load buttons (not used in this workflow)
   $("#exportCsvBtn").addEventListener("click", exportCSV);
   $("#exportDetailCsvBtn").addEventListener("click", exportDetailCSV);
 
@@ -632,8 +627,8 @@ function bindEvents() {
       state.windows = data.windows;
       state.currentIndex = data.currentIndex || 0;
       state.absOrigin = (typeof data.absOrigin === 'number') ? data.absOrigin : null;
+      if (typeof data.cameraNumber === 'number') state.cameraNumber = data.cameraNumber;
       $("#videoId").value = state.videoId;
-      $("#windowMinutes").value = Math.max(1, Math.round(state.windowSeconds / 60));
       renderActive();
       alert("読み込みました。");
     } catch (err) {
@@ -680,6 +675,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const addBtn = document.getElementById("addFilesBtn");
   const prevVideoBtn = document.getElementById("prevVideoBtn");
   const nextVideoBtn = document.getElementById("nextVideoBtn");
+  const cameraInput = document.getElementById("cameraNumber");
   const video = document.getElementById("videoEl");
   if (!fi || !video) return;
 
@@ -755,7 +751,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       // Confirm overwrite (after reflecting fields)
       if (state.windows.length && !confirm("既存のウィンドウを上書きして再生成しますか？")) return;
-      const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
+      const minutes = Math.max(1, Math.round(state.windowSeconds / 60) || 5);
       // coverage from all files to restrict generation to fully covered on-time slots
       state.coverage = metas.map(m => ({ startAbs: m.info.startAbs, endAbs: m.info.endAbs }));
       buildWindowsFromAbsRange(minStart, maxEnd, minutes);
@@ -780,7 +776,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setStatus('ファイル名から開始/終了を読み取りました。', 'info');
       // Build windows by absolute wall-clock range from filename
       if (state.windows.length && !confirm("既存のウィンドウを上書きして再生成しますか？")) return;
-      const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
+      const minutes = Math.max(1, Math.round(state.windowSeconds / 60) || 5);
       state.coverage = [{ startAbs: pm.startAbs, endAbs: pm.endAbs }];
       buildWindowsFromAbsRange(pm.startAbs, pm.endAbs, minutes);
       setStatus('ファイル名から開始/終了を読み取り、5分ウィンドウを生成しました。', 'info');
@@ -862,7 +858,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return a.name.localeCompare(b.name);
       });
       state.selectedFiles = merged;
-      const minutes = Math.max(1, parseInt($("#windowMinutes").value, 10) || 5);
+      const minutes = Math.max(1, Math.round(state.windowSeconds / 60) || 5);
       recomputeFromCoverage(minutes);
       setStatus(`ファイルを追加しました（${files.length}件）。5分ウィンドウを再生成しました。`, 'info');
       fai.value = '';
@@ -871,6 +867,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (prevVideoBtn) prevVideoBtn.addEventListener('click', () => updateVideoToIndex(state.currentFileIndex - 1));
   if (nextVideoBtn) nextVideoBtn.addEventListener('click', () => updateVideoToIndex(state.currentFileIndex + 1));
+  if (cameraInput) {
+    cameraInput.value = String(state.cameraNumber);
+    cameraInput.addEventListener('change', () => {
+      const v = parseInt(cameraInput.value, 10);
+      if (!Number.isFinite(v) || v <= 0) {
+        cameraInput.value = String(state.cameraNumber);
+        return;
+      }
+      state.cameraNumber = v;
+      saveToLocalStorage();
+    });
+  }
 });
 
 async function probeDurationViaServer(file) {

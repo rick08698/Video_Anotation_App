@@ -28,20 +28,16 @@
           終了時刻
           <input id="endTime" placeholder="00:29:59" />
         </label>
-        <label>
-          ウィンドウ（分）
-          <input id="windowMinutes" type="number" min="1" value="5" />
-        </label>
-        <button id="generateBtn">ウィンドウ生成</button>
-        <button id="saveLocalBtn" title="ブラウザに保存">ローカル保存</button>
-        <button id="loadLocalBtn" title="ブラウザから読込">ローカル読込</button>
-        <button id="saveServerBtn" title="サーバへ保存">サーバ保存</button>
-        <button id="loadServerBtn" title="サーバから読込">サーバ読込</button>
+        
         <button id="exportCsvBtn">CSV書き出し</button>
         <button id="exportDetailCsvBtn">詳細CSV</button>
         <label class="importLabel">
           JSON読込
           <input id="importJsonInput" type="file" accept="application/json" />
+        </label>
+        <label>
+          カメラ
+          <input id="cameraNumber" type="number" min="1" step="1" value="9" style="width:64px" />
         </label>
       </div>
       <p class="hint">動画を読み込むと、ファイル名から video_id、開始/終了を自動反映（`PYYMMDD_HHMMSS_HHMMSS.*` または `PYYMMDD-HHMMSS-HHMMSS.*` を優先。なければ動画長で終了を推定）。</p>
