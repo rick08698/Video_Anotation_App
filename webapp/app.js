@@ -70,6 +70,19 @@ function formatAbsDate(absSec) {
   return `${y}-${mo}-${da}`;
 }
 
+function formatAbsDateCompact(absSec) {
+  const d = new Date(absSec * 1000);
+  const y = d.getFullYear();
+  const mo = pad(d.getMonth() + 1);
+  const da = pad(d.getDate());
+  return `${y}${mo}${da}`;
+}
+
+function formatAbsHMSCompact(absSec) {
+  const d = new Date(absSec * 1000);
+  return `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
 // ---------- Filename parse helper ----------
 function parseP(name) {
   // Accept PYYMMDD[_-]HHMMSS[_-]HHMMSS anywhere (case-insensitive)
@@ -215,7 +228,7 @@ function csvEscape(v) {
 
 function exportCSV() {
   const header = [
-    "video_id","date","window_start","window_end","total_unique","moving_count","staying_count","notes"
+    "date","window_start","window_end","total_unique","moving_count","staying_count","notes"
   ];
   const rows = [header.join(",")];
   for (const w of state.windows) {
@@ -228,7 +241,6 @@ function exportCSV() {
     const staying = w.entries.filter((e) => e === "s").length;
     const total = moving + staying;
     const row = [
-      state.videoId,
       state.absOrigin != null ? formatAbsDate(state.absOrigin + w.startSec) : "",
       state.absOrigin != null ? absToHMS(state.absOrigin + w.startSec) : secToHMS(w.startSec),
       state.absOrigin != null ? absToHMS(state.absOrigin + w.endSec) : secToHMS(w.endSec),
@@ -240,11 +252,20 @@ function exportCSV() {
     rows.push(row);
   }
   const blob = new Blob([rows.join("\n") + "\n"], {type: "text/csv;charset=utf-8"});
-  downloadBlob(blob, `${state.videoId || "annotations"}.csv`);
+  let fname = `${state.videoId || "annotations"}.csv`;
+  if (state.absOrigin != null && state.windows.length) {
+    const firstAbs = state.absOrigin + state.windows[0].startSec;
+    const lastAbs = state.absOrigin + state.windows[state.windows.length - 1].endSec;
+    const baseDate = formatAbsDateCompact(firstAbs);
+    const startStr = formatAbsHMSCompact(firstAbs);
+    const endStr = formatAbsHMSCompact(lastAbs);
+    fname = `${baseDate}_${startStr}_${endStr}.csv`;
+  }
+  downloadBlob(blob, fname);
 }
 
 function exportDetailCSV() {
-  const header = ["video_id","date","window_start","person_local_id","visible_sec","behavior","remarks"];
+  const header = ["date","window_start","person_local_id","visible_sec","behavior","remarks"];
   const rows = [header.join(",")];
   for (const w of state.windows) {
     const pending = w.entries.filter((e) => e === "p").length;
@@ -256,7 +277,6 @@ function exportDetailCSV() {
     w.entries.forEach((e) => {
       if (e === "m" || e === "s") {
         const row = [
-          state.videoId,
           state.absOrigin != null ? formatAbsDate(state.absOrigin + w.startSec) : "",
           state.absOrigin != null ? absToHMS(state.absOrigin + w.startSec) : secToHMS(w.startSec),
           `p${String(idx).padStart(3, "0")}`,
@@ -270,7 +290,16 @@ function exportDetailCSV() {
     });
   }
   const blob = new Blob([rows.join("\n") + "\n"], {type: "text/csv;charset=utf-8"});
-  downloadBlob(blob, `${state.videoId || "annotations"}_detail.csv`);
+  let fname = `${state.videoId || "annotations"}_detail.csv`;
+  if (state.absOrigin != null && state.windows.length) {
+    const firstAbs = state.absOrigin + state.windows[0].startSec;
+    const lastAbs = state.absOrigin + state.windows[state.windows.length - 1].endSec;
+    const baseDate = formatAbsDateCompact(firstAbs);
+    const startStr = formatAbsHMSCompact(firstAbs);
+    const endStr = formatAbsHMSCompact(lastAbs);
+    fname = `${baseDate}_${startStr}_${endStr}_detail.csv`;
+  }
+  downloadBlob(blob, fname);
 }
 
 function downloadBlob(blob, filename) {
@@ -370,10 +399,24 @@ function buildWindowsFromAbsRange(startAbs, endAbs, minutes) {
   renderActive();
   saveToLocalStorage();
   if (missing.length) {
-    // Show first few missing slots to prompt adding files
-    const ex = missing.slice(0, 3).map(([a,b]) => `${formatAbsDateTime(a)} – ${formatAbsDateTime(b)}`).join("\n");
-    const more = missing.length > 3 ? `\n…ほか ${missing.length - 3} 枠` : '';
-    setStatus(`オンタイム5分枠で未カバーの区間があります。\n以下の枠をカバーする前後のファイルを追加してください:\n${ex}${more}`, 'warn');
+    const box = document.getElementById('videoStatus');
+    if (box) {
+      box.className = 'status warn';
+      let html = 'オンタイム5分枠で未カバーの区間があります。<br/>以下の枠をカバーする前後のファイルを追加してください。';
+      const show = missing.slice(0, 5);
+      html += '<ul style="margin:6px 0; padding-left: 18px;">';
+      for (const [a,b] of show) {
+        const label = `${formatAbsDateTime(a)} – ${formatAbsDateTime(b)}`;
+        html += `<li style="margin:4px 0;">${label} <button class="add-missing" data-start="${a}" data-end="${b}">この枠を追加</button></li>`;
+      }
+      html += '</ul>';
+      if (missing.length > show.length) {
+        html += `…ほか ${missing.length - show.length} 枠`;
+      }
+      box.innerHTML = html;
+    } else {
+      setStatus('オンタイム5分枠で未カバーの区間があります。', 'warn');
+    }
   }
   return true;
 }
@@ -909,3 +952,31 @@ async function pollTranscode(jobId) {
     tick();
   });
 }
+  // Allow manually inserting missing on-time windows from status panel
+  const statusPanel = document.getElementById('videoStatus');
+  function insertWindowAbs(startAbs, endAbs) {
+    if (state.absOrigin == null) return;
+    const startRel = startAbs - state.absOrigin;
+    const endRel = endAbs - state.absOrigin;
+    // Skip if already exists
+    if (state.windows.some(w => w.startSec === startRel && w.endSec === endRel)) return;
+    state.windows.push({ startSec: startRel, endSec: endRel, entries: [], notes: "", history: [] });
+    // sort by startSec
+    state.windows.sort((a,b) => a.startSec - b.startSec);
+    state.currentIndex = state.windows.findIndex(w => w.startSec === startRel);
+    renderActive();
+    saveToLocalStorage();
+  }
+  if (statusPanel) {
+    statusPanel.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('button.add-missing');
+      if (!btn) return;
+      const a = parseInt(btn.getAttribute('data-start'), 10);
+      const b = parseInt(btn.getAttribute('data-end'), 10);
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        insertWindowAbs(a, b);
+        btn.disabled = true;
+        btn.textContent = '追加済み';
+      }
+    });
+  }
