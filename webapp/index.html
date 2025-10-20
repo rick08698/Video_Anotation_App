@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>公園動画アノテーション</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>公園動画アノテーション（5分ウィンドウ）</h1>
+      <div class="toolbar">
+        <label class="file">
+          動画
+          <input id="videoFileInput" type="file" multiple accept="video/*,.mp4,.mov,.mkv,.hevc,.265,.m4v,.avi,.mts,.m2ts,.webm" />
+        </label>
+        <button id="addFilesBtn" title="既存の選択に追加">ファイル追加</button>
+        <input id="videoFileAddInput" type="file" multiple accept="video/*,.mp4,.mov,.mkv,.hevc,.265,.m4v,.avi,.mts,.m2ts,.webm" style="display:none" />
+        <label>
+          video_id
+          <input id="videoId" placeholder="park_2024-05-01_camA" />
+        </label>
+        <label>
+          開始時刻
+          <input id="startTime" placeholder="00:00:00" />
+        </label>
+        <label>
+          終了時刻
+          <input id="endTime" placeholder="00:29:59" />
+        </label>
+        <label>
+          ウィンドウ（分）
+          <input id="windowMinutes" type="number" min="1" value="5" />
+        </label>
+        <button id="generateBtn">ウィンドウ生成</button>
+        <button id="saveLocalBtn" title="ブラウザに保存">ローカル保存</button>
+        <button id="loadLocalBtn" title="ブラウザから読込">ローカル読込</button>
+        <button id="saveServerBtn" title="サーバへ保存">サーバ保存</button>
+        <button id="loadServerBtn" title="サーバから読込">サーバ読込</button>
+        <button id="exportCsvBtn">CSV書き出し</button>
+        <button id="exportDetailCsvBtn">詳細CSV</button>
+        <label class="importLabel">
+          JSON読込
+          <input id="importJsonInput" type="file" accept="application/json" />
+        </label>
+      </div>
+      <p class="hint">動画を読み込むと、ファイル名から video_id、開始/終了を自動反映（`PYYMMDD_HHMMSS_HHMMSS.*` または `PYYMMDD-HHMMSS-HHMMSS.*` を優先。なければ動画長で終了を推定）。</p>
+      <p class="hint">ショートカット: A=人数+1, M=未確定→移動, S=未確定→滞留, Z=取り消し, ←/→=前後, N=次のウィンドウ</p>
+    </header>
+
+    <main>
+      <aside id="windowList" class="window-list"></aside>
+      <section class="panel">
+        <div class="video-preview">
+          <video id="videoEl" controls preload="metadata"></video>
+          <div id="videoStatus" class="status"></div>
+        </div>
+        <div class="window-header">
+          <button id="prevBtn">← 前へ</button>
+          <div>
+            <div id="windowTitle" class="window-title">[未生成]</div>
+            <div id="windowIndex" class="window-index"></div>
+          </div>
+          <button id="nextBtn">次へ →</button>
+        </div>
+
+        <div class="counters">
+          <div class="counter">
+            <div class="label">人数（未確定）</div>
+            <div class="value" id="pendingCount">0</div>
+            <div class="buttons">
+              <button id="addPersonBtn">+1</button>
+              <button id="subPersonBtn">-1</button>
+            </div>
+          </div>
+
+          <div class="counter">
+            <div class="label">移動（moving）</div>
+            <div class="value" id="movingCount">0</div>
+            <div class="buttons">
+              <button id="addMovingBtn" title="未確定→移動">未確定→+1</button>
+              <button id="subMovingBtn" title="移動→未確定">-1→未確定</button>
+            </div>
+          </div>
+
+          <div class="counter">
+            <div class="label">滞留（staying）</div>
+            <div class="value" id="stayingCount">0</div>
+            <div class="buttons">
+              <button id="addStayingBtn" title="未確定→滞留">未確定→+1</button>
+              <button id="subStayingBtn" title="滞留→未確定">-1→未確定</button>
+            </div>
+          </div>
+
+          <div class="counter total">
+            <div class="label">総人数（未確定含む）</div>
+            <div class="value" id="totalUnique">0</div>
+            <div class="buttons">
+              <button id="undoBtn">取り消し</button>
+              <button id="clearBtn" class="danger">クリア</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="notes">
+          <label>メモ（notes）</label>
+          <textarea id="notes" rows="4" placeholder="例：雨で視界やや悪い"></textarea>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <small>ガイドに準拠：ユニーク人数と「移動&lt;120s / 滞留≥120s」を5分ごとにカウント</small>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+  </html>

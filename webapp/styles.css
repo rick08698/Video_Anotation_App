@@ -1,0 +1,71 @@
+:root {
+  --bg: #0f1115;
+  --panel: #151823;
+  --text: #e7eaf0;
+  --muted: #a7afc0;
+  --accent: #4aa3ff;
+  --accent-2: #50e3c2;
+  --danger: #ff5a5f;
+  --border: #242a3b;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans JP", "Apple Color Emoji", "Segoe UI Emoji";
+  color: var(--text);
+  background: radial-gradient(1200px 600px at 20% -20%, #1a2135, transparent), var(--bg);
+}
+
+header { padding: 16px; border-bottom: 1px solid var(--border); }
+header h1 { margin: 0 0 8px; font-size: 18px; color: #f5f7fb; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.toolbar label { display: flex; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--border); padding: 6px 8px; border-radius: 8px; color: var(--muted); }
+.toolbar input { background: transparent; border: none; color: var(--text); outline: none; min-width: 120px; }
+.toolbar input[type="number"] { width: 64px; }
+.toolbar button, .importLabel { background: #0f1422; border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+.importLabel { display: inline-flex; align-items: center; gap: 6px; }
+.importLabel input { display: none; }
+.toolbar button:hover, .importLabel:hover { border-color: var(--accent); }
+.hint { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+
+main { display: grid; grid-template-columns: 280px 1fr; gap: 12px; padding: 12px; }
+.window-list { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: auto; height: calc(100vh - 160px); }
+.window-item { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border); color: var(--muted); }
+.window-item:hover { background: #151b2a; }
+.window-item.active { background: #101524; color: var(--text); border-left: 3px solid var(--accent); }
+.window-item .counts { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.video-preview { margin-bottom: 12px; }
+.video-preview video { width: 100%; max-height: 280px; background: #000; border-radius: 8px; border: 1px solid var(--border); }
+.status { margin-top: 6px; font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: #0f1422; color: var(--muted); white-space: pre-wrap; }
+.status.info { border-color: #2a3b6b; color: #b7c6ff; }
+.status.warn { border-color: #6b5b2a; color: #ffe3a3; }
+.status.error { border-color: #6b2a2a; color: #ffb3b6; }
+.window-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.window-header button { background: #0f1422; border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+.window-header button:hover { border-color: var(--accent); }
+.window-title { font-size: 16px; color: #f5f7fb; }
+.window-index { font-size: 12px; color: var(--muted); }
+
+.counters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.counter { background: #0f1422; border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.counter .label { color: var(--muted); margin-bottom: 6px; }
+.counter .value { font-size: 28px; font-variant-numeric: tabular-nums; margin-bottom: 10px; }
+.counter .buttons { display: flex; gap: 8px; }
+.counter button { background: #131a2b; border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+.counter button:hover { border-color: var(--accent-2); }
+.counter.total { border-color: #1f2a44; }
+.counter .danger { border-color: var(--danger); color: #ffc7c9; }
+
+.notes { margin-top: 16px; display: grid; gap: 6px; }
+.notes textarea { width: 100%; background: #0f1422; border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; resize: vertical; }
+
+footer { padding: 8px 16px 16px; color: var(--muted); }
+
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+  .window-list { height: auto; max-height: 260px; }
+}
