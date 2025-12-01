@@ -679,13 +679,27 @@ document.addEventListener("DOMContentLoaded", () => {
   const video = document.getElementById("videoEl");
   if (!fi || !video) return;
 
-  function updateVideoToIndex(idx) {
+  function loadVideoSrc(url, opts = {}) {
+    if (!url) return;
+    const { onLoadedmetadata, onError, reset } = opts;
+    video.pause();
+    if (reset) {
+      video.removeAttribute('src');
+      video.load(); // flush existing state so new listeners see events
+    }
+    if (onLoadedmetadata) video.addEventListener('loadedmetadata', onLoadedmetadata, { once: true });
+    if (onError) video.addEventListener('error', onError, { once: true });
+    video.src = url;
+    video.load();
+  }
+
+  function updateVideoToIndex(idx, loadOpts) {
     if (!state.selectedFiles.length) return;
     const i = Math.max(0, Math.min(idx, state.selectedFiles.length - 1));
     state.currentFileIndex = i;
     const cur = state.selectedFiles[i];
     if (cur && cur.url) {
-      video.src = cur.url;
+      loadVideoSrc(cur.url, loadOpts || {});
       const info = document.getElementById('videoFileInfo');
       if (info) {
         const range = (cur.startAbs && cur.endAbs) ? `${formatAbsDateTime(cur.startAbs)} – ${formatAbsDateTime(cur.endAbs)}` : '';
@@ -696,14 +710,14 @@ document.addEventListener("DOMContentLoaded", () => {
     if (nextVideoBtn) nextVideoBtn.disabled = (i === state.selectedFiles.length - 1);
   }
 
-  function setSelectedFilesFromMetas(metas) {
+  function setSelectedFilesFromMetas(metas, loadOpts) {
     // metas: [{file, info?}]
     const arr = metas.map(m => {
       const url = URL.createObjectURL(m.file);
       const name = m.file.name;
       const startAbs = m.info ? m.info.startAbs : null;
       const endAbs = m.info ? m.info.endAbs : null;
-      return { name, url, startAbs, endAbs };
+      return { name, url, startAbs, endAbs, file: m.file };
     });
     // sort by startAbs if available
     arr.sort((a,b) => {
@@ -712,14 +726,66 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     state.selectedFiles = arr;
     state.currentFileIndex = 0;
-    updateVideoToIndex(0);
+    const opts = (typeof loadOpts === 'function') ? loadOpts(state.selectedFiles[0]) : loadOpts;
+    updateVideoToIndex(0, opts);
+  }
+
+  function transcodeAndSwap(curFileEntry, opts = {}) {
+    const { autoGenerateFromDuration = false, statusPrefix, statusLevel = 'warn' } = opts;
+    if (!curFileEntry || !curFileEntry.file) return;
+    if (curFileEntry._transcodeRunning) return;
+    curFileEntry._transcodeRunning = true;
+    setStatus(statusPrefix || 'H.264 への変換を試行します…', statusLevel);
+    transcodeViaServer(curFileEntry.file).then((res) => {
+      if (!res) {
+        // transcodeViaServer 内でステータスを出しているのでここでは追加しない
+        return;
+      }
+      if (res.error) {
+        setStatus(`変換エラー: ${res.error}`, 'error');
+        return;
+      }
+      if (!res.url) {
+        setStatus('変換に失敗しました。', 'error');
+        return;
+      }
+      curFileEntry.url = res.url;
+      curFileEntry.transcoded = true;
+      const onMeta = () => {
+        if (autoGenerateFromDuration) {
+          const endInput = document.getElementById("endTime");
+          if (res.duration && (!endInput.value || endInput.value === "00:00:00")) {
+            endInput.value = secToHMS(Math.floor(res.duration));
+          }
+          if (!state.windows.length || confirm("トランスコード後の動画長でウィンドウを再生成しますか？")) {
+            generateWindows();
+          }
+        }
+        setStatus('変換完了: 再生可能な形式に変換しました。', 'info');
+      };
+      loadVideoSrc(curFileEntry.url, {
+        reset: true,
+        onLoadedmetadata: onMeta,
+        onError: () => setStatus('変換後の再生に失敗しました。', 'error'),
+      });
+    }).catch(() => {
+      setStatus('変換に失敗しました。', 'error');
+    }).finally(() => {
+      curFileEntry._transcodeRunning = false;
+    });
+  }
+
+  function buildOnErrorHandler(curFileEntry, opts = {}) {
+    return () => {
+      const errText = mediaErrorToText(video.error);
+      const prefix = `再生エラー: ${errText}\nH.264 への変換を試行します…`;
+      transcodeAndSwap(curFileEntry, { ...opts, statusPrefix: prefix });
+    };
   }
 
   fi.addEventListener("change", () => {
     const files = Array.from(fi.files || []);
     if (!files.length) return;
-
-    const toHMS = (hhmmss) => `${hhmmss.slice(0,2)}:${hhmmss.slice(2,4)}:${hhmmss.slice(4,6)}`;
 
     // Multi-file mode
     if (files.length > 1) {
@@ -736,7 +802,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const minStart = metas[0].info.startAbs;
       const maxEnd = metas[metas.length - 1].info.endAbs;
       // Store selected files and show the first
-      setSelectedFilesFromMetas(metas);
+      setSelectedFilesFromMetas(metas, (first) => ({
+        reset: true,
+        onError: first ? buildOnErrorHandler(first, { autoGenerateFromDuration: false }) : undefined,
+      }));
       // Reflect start/end fields from filenames immediately
       $("#startTime").value = metas[0].info.startStr;
       $("#endTime").value = metas[metas.length-1].info.endStr;
@@ -760,12 +829,30 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Single file mode
     const f = files[0];
-    setSelectedFilesFromMetas([{ file: f, info: parseP(f.name) || null }]);
-    let attemptedTranscode = false;
+    const pm = parseP(f.name);
+    const isRaw265 = /\.h?265$/i.test(f.name);
+    const autoGenerateFromDuration = !pm;
+    const onMeta = () => {
+      const cur = state.selectedFiles[state.currentFileIndex];
+      if (cur && cur.transcoded) return; // transcodedファイルは transcodeAndSwap 側で処理
+      const dur = Math.floor(video.duration || 0);
+      document.getElementById("endTime").value = secToHMS(dur);
+      if (dur > 0) {
+        if (state.windows.length && !confirm("既存のウィンドウを上書きして再生成しますか？")) return;
+        generateWindows();
+        setStatus(`メタデータから動画長を取得: ${secToHMS(dur)}`, 'info');
+      }
+    };
+
+    setSelectedFilesFromMetas([{ file: f, info: pm || null }], (first) => ({
+      reset: true,
+      onLoadedmetadata: pm ? null : onMeta,
+      onError: first ? buildOnErrorHandler(first, { autoGenerateFromDuration }) : undefined,
+    }));
+    const curEntry = state.selectedFiles[0];
     setStatus(`動画を読み込みました: ${f.name}\nメタデータ取得を試行中…`, 'info');
 
     const base = f.name.replace(/\.[^.]+$/, "");
-    const pm = parseP(f.name);
     document.getElementById("videoId").value = base;
 
     if (pm) {
@@ -806,32 +893,15 @@ document.addEventListener("DOMContentLoaded", () => {
           setStatus(`サーバで動画長を取得: ${secToHMS(dur)}`, 'info');
         }
       }).catch(() => {/* ignore */});
+    }
 
-      // If playback is not supported, attempt server-side transcode to H.264
-      const onError = () => {
-        if (attemptedTranscode) return;
-        attemptedTranscode = true;
-        const errText = mediaErrorToText(video.error);
-        setStatus(`再生エラー: ${errText}\nH.264 への変換を試行します…`, 'warn');
-        transcodeViaServer(f).then((res) => {
-          if (!res || !res.url) return;
-          video.src = res.url;
-          // duration from server if provided
-          if (res.duration && (!document.getElementById("endTime").value || document.getElementById("endTime").value === "00:00:00")) {
-            document.getElementById("endTime").value = secToHMS(Math.floor(res.duration));
-          }
-          // On metadata of transcoded file, generate windows if none
-          const onTMeta = () => {
-            video.removeEventListener("loadedmetadata", onTMeta);
-            if (!state.windows.length || confirm("トランスコード後の動画長でウィンドウを再生成しますか？")) {
-              generateWindows();
-            }
-            setStatus('変換完了: 再生可能な形式に変換しました。', 'info');
-          };
-          video.addEventListener("loadedmetadata", onTMeta);
-        }).catch(() => {/* ignore */});
-      };
-      video.addEventListener('error', onError, { once: true });
+    // Proactively transcode raw .265/.h265 sinceブラウザがほぼ再生不可
+    if (isRaw265 && curEntry) {
+      transcodeAndSwap(curEntry, {
+        autoGenerateFromDuration,
+        statusPrefix: 'HEVC/.265 を検出: ブラウザ再生用に変換します…',
+        statusLevel: 'info',
+      });
     }
   });
 
@@ -851,7 +921,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!Array.isArray(state.coverage)) state.coverage = [];
       state.coverage.push(...newCov);
       // merge selected files list
-      const merged = state.selectedFiles.concat(metas.map(m => ({ name: m.file.name, url: URL.createObjectURL(m.file), startAbs: m.info.startAbs, endAbs: m.info.endAbs })));
+      const merged = state.selectedFiles.concat(metas.map(m => ({ name: m.file.name, url: URL.createObjectURL(m.file), startAbs: m.info.startAbs, endAbs: m.info.endAbs, file: m.file })));
       // sort and de-dup by name+range
       merged.sort((a,b) => {
         if (a.startAbs != null && b.startAbs != null) return a.startAbs - b.startAbs;
@@ -865,8 +935,13 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  if (prevVideoBtn) prevVideoBtn.addEventListener('click', () => updateVideoToIndex(state.currentFileIndex - 1));
-  if (nextVideoBtn) nextVideoBtn.addEventListener('click', () => updateVideoToIndex(state.currentFileIndex + 1));
+  const loadIndexWithError = (idx) => {
+    const target = state.selectedFiles[idx];
+    updateVideoToIndex(idx, target ? { reset: true, onError: buildOnErrorHandler(target, { autoGenerateFromDuration: false }) } : { reset: true });
+  };
+
+  if (prevVideoBtn) prevVideoBtn.addEventListener('click', () => loadIndexWithError(state.currentFileIndex - 1));
+  if (nextVideoBtn) nextVideoBtn.addEventListener('click', () => loadIndexWithError(state.currentFileIndex + 1));
   if (cameraInput) {
     cameraInput.value = String(state.cameraNumber);
     cameraInput.addEventListener('change', () => {
@@ -899,6 +974,7 @@ async function probeDurationViaServer(file) {
     const data = await res.json();
     return data && data.duration ? data.duration : null;
   } catch (_) {
+    setStatus('変換リクエストに失敗しました（サーバーに接続できませんでした）。サーバーが起動しているか確認してください。', 'error');
     return null;
   }
 }
@@ -946,13 +1022,13 @@ async function pollTranscode(jobId) {
         } else if (j.status === 'error') {
           setStatus(`変換エラー: ${j.message || ''}`, 'error');
           clearInterval(timer);
-          resolve(null);
+          resolve({ error: j.message || 'unknown_error' });
           return;
         }
       } catch (e) {
         setStatus('変換ステータス取得中にエラーが発生しました。', 'error');
         clearInterval(timer);
-        resolve(null);
+        resolve({ error: 'status_fetch_failed' });
         return;
       }
     };
