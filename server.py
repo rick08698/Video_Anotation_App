@@ -5,31 +5,55 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import mimetypes
 import urllib.parse
 import uuid
 import threading
 import time
+from email.parser import BytesParser
+from email.policy import default as default_policy
 
 ROOT = pathlib.Path(__file__).parent
 WEB = ROOT / "webapp"
 DATA = ROOT / "annotations"
 DATA.mkdir(exist_ok=True)
-TRANSCODE_DIR = WEB / "transcoded"
-TRANSCODE_DIR.mkdir(exist_ok=True)
+CONVERT_DIR = ROOT / "convert"
+CONVERT_DIR.mkdir(exist_ok=True)
 
 # In-memory job store for transcode progress
 JOBS = {}
+
+def _safe_output_path(orig_name: str) -> pathlib.Path:
+    """Build an mp4 output path in CONVERT_DIR using the source file name."""
+    stem = pathlib.Path(orig_name or "converted").stem or "converted"
+    candidate = CONVERT_DIR / f"{stem}.mp4"
+    if not candidate.exists():
+        return candidate
+    # Avoid clobbering; append numeric suffix
+    i = 1
+    while True:
+        cand = CONVERT_DIR / f"{stem}-{i}.mp4"
+        if not cand.exists():
+            return cand
+        i += 1
+
+def _input_args_for(path: str) -> list[str]:
+    ext = pathlib.Path(path).suffix.lower()
+    if ext in ('.265', '.h265', '.hevc'):
+        return ['-f', 'hevc']
+    return []
 
 def _run_transcode_job(job_id, in_path: str, out_path: pathlib.Path, duration_hint: float | None):
     job = JOBS.get(job_id)
     if not job:
         return
+    input_args = _input_args_for(in_path)
     # Probe input duration if not provided
     duration = duration_hint
     if duration is None:
         try:
             out = subprocess.run([
-                'ffprobe','-v','quiet','-print_format','json','-show_format', in_path
+                'ffprobe','-v','quiet','-print_format','json','-show_format', *input_args, in_path
             ], capture_output=True, check=True)
             info = json.loads(out.stdout.decode('utf-8','ignore'))
             fmt = info.get('format') or {}
@@ -41,7 +65,7 @@ def _run_transcode_job(job_id, in_path: str, out_path: pathlib.Path, duration_hi
 
     cmd = [
         'ffmpeg','-y','-hide_banner','-loglevel','error',
-        '-i', in_path,
+        *input_args, '-i', in_path,
         '-movflags','+faststart',
         '-c:v','libx264','-profile:v','main','-pix_fmt','yuv420p','-preset','veryfast','-crf','23',
         '-c:a','aac','-b:a','128k',
@@ -80,7 +104,7 @@ def _run_transcode_job(job_id, in_path: str, out_path: pathlib.Path, duration_hi
                         break
         rc = proc.wait()
         if rc == 0:
-            job.update(status='done', url=f"/transcoded/{out_path.name}", progress=1.0)
+            job.update(status='done', url=f"/convert/{out_path.name}", progress=1.0)
         else:
             err = ''
             try:
@@ -96,6 +120,109 @@ def _run_transcode_job(job_id, in_path: str, out_path: pathlib.Path, duration_hi
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    def _json_error(self, status_code: int, payload: dict):
+        try:
+            body = json.dumps(payload).encode('utf-8')
+        except Exception:
+            body = b'{}'
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+        try:
+            # Lightweight server-side logging for debugging bad requests
+            msg = payload.get("message") if isinstance(payload, dict) else None
+            print(f"[api error] {status_code} {self.path} {msg}", flush=True)
+        except Exception:
+            pass
+
+    def _read_multipart_file(self):
+        ctype = self.headers.get('Content-Type', '')
+        if 'multipart/form-data' not in ctype:
+            self._json_error(400, {"error": "bad_request", "message": "multipart/form-data required"})
+            return None
+        try:
+            length = int(self.headers.get('Content-Length') or '0')
+        except Exception:
+            length = 0
+        if length <= 0:
+            self._json_error(400, {"error": "bad_request", "message": "Content-Length required"})
+            return None
+        body = self.rfile.read(length)
+        try:
+            msg = BytesParser(policy=default_policy).parsebytes(
+                f"Content-Type: {ctype}\r\n\r\n".encode('utf-8') + body
+            )
+        except Exception as e:
+            self._json_error(400, {"error": "bad_request", "message": f"multipart parse failed: {e}"})
+            return None
+        file_part = None
+        for part in msg.iter_parts():
+            if part.get_content_disposition() != 'form-data':
+                continue
+            name = part.get_param('name', header='content-disposition')
+            if name == 'file':
+                file_part = part
+                break
+        if not file_part:
+            names = [p.get_param('name', header='content-disposition') for p in msg.iter_parts()]
+            self._json_error(400, {"error": "bad_request", "message": f"file field missing (names={names})"})
+            return None
+        data = file_part.get_payload(decode=True) or b''
+        filename = file_part.get_filename() or 'upload.bin'
+        return filename, data
+
+    def _serve_file_with_range(self, path: pathlib.Path):
+        if not path.exists() or not path.is_file():
+            self.send_error(404, "not found")
+            return
+        size = path.stat().st_size
+        ctype = mimetypes.guess_type(str(path))[0] or 'application/octet-stream'
+        range_header = self.headers.get('Range')
+        if range_header and range_header.startswith('bytes='):
+            try:
+                rng = range_header.split('=', 1)[1]
+                start_s, end_s = rng.split('-', 1)
+                start = int(start_s) if start_s else 0
+                end = int(end_s) if end_s else size - 1
+                start = max(0, min(start, size - 1))
+                end = max(start, min(end, size - 1))
+            except Exception:
+                self.send_error(416, "Invalid Range")
+                return
+            length = end - start + 1
+            with path.open('rb') as f:
+                f.seek(start)
+                chunk = f.read(length)
+            self.send_response(206)
+            self.send_header('Content-Type', ctype)
+            self.send_header('Content-Length', str(len(chunk)))
+            self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                self.wfile.write(chunk)
+            except BrokenPipeError:
+                # Client closed connection (e.g., during rapid seeking)
+                return
+            return
+        # No Range header: full content
+        with path.open('rb') as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Accept-Ranges', 'bytes')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except BrokenPipeError:
+            return
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -141,6 +268,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(payload).encode('utf-8'))
             return
 
+        # serve converted files with Range support
+        if parsed.path.startswith("/convert/"):
+            fs_path = CONVERT_DIR / pathlib.Path(parsed.path).name
+            self._serve_file_with_range(fs_path)
+            return
+        # backward compatibility for old /transcoded/ URLs: serve from convert dir
+        if parsed.path.startswith("/transcoded/"):
+            name = pathlib.Path(parsed.path).name
+            fs_path = CONVERT_DIR / name
+            if not fs_path.exists():
+                legacy = WEB / "transcoded" / name
+                fs_path = legacy
+            self._serve_file_with_range(fs_path)
+            return
+
         # serve static files from webapp/
         if self.path == "/":
             return http.server.SimpleHTTPRequestHandler.do_GET(self)
@@ -170,28 +312,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/probe-duration":
-            # Accept multipart/form-data with field name 'file'
-            ctype = self.headers.get('Content-Type', '')
-            if 'multipart/form-data' not in ctype:
-                self.send_error(400, "multipart/form-data required")
+            res = self._read_multipart_file()
+            if not res:
                 return
+            orig_name, file_bytes = res
             try:
-                import cgi
-                fs = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={
-                    'REQUEST_METHOD': 'POST',
-                    'CONTENT_TYPE': ctype,
-                })
-                field = fs['file'] if 'file' in fs else None
-                if not field or not getattr(field, 'file', None):
-                    self.send_error(400, "file field missing")
-                    return
-                with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                    tmp.write(field.file.read())
+                with tempfile.NamedTemporaryFile(delete=False, suffix=pathlib.Path(orig_name or 'in').suffix) as tmp:
+                    tmp.write(file_bytes)
                     tmp_path = tmp.name
                 # Run ffprobe
                 try:
+                    input_args = _input_args_for(tmp_path)
                     out = subprocess.run([
-                        'ffprobe','-v','quiet','-print_format','json','-show_format','-show_streams', tmp_path
+                        'ffprobe','-v','quiet','-print_format','json','-show_format','-show_streams', *input_args, tmp_path
                     ], capture_output=True, check=True)
                 except FileNotFoundError:
                     os.unlink(tmp_path)
@@ -239,38 +372,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
             except Exception as e:
                 # Generic fallback when multipart parsing or processing fails unexpectedly
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "bad_request", "message": str(e)}).encode('utf-8'))
+                self._json_error(400, {"error": "bad_request", "message": str(e)})
                 return
 
         if parsed.path == "/api/transcode":
-            # Transcode uploaded video to H.264 MP4 for browser playback
-            ctype = self.headers.get('Content-Type', '')
-            if 'multipart/form-data' not in ctype:
-                self.send_error(400, "multipart/form-data required")
+            res = self._read_multipart_file()
+            if not res:
                 return
+            orig_name, file_bytes = res
             try:
-                import cgi
-                fs = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={
-                    'REQUEST_METHOD': 'POST',
-                    'CONTENT_TYPE': ctype,
-                })
-                field = fs['file'] if 'file' in fs else None
-                if not field or not getattr(field, 'file', None):
-                    self.send_error(400, "file field missing")
-                    return
-                with tempfile.NamedTemporaryFile(delete=False, suffix=pathlib.Path(field.filename or 'in').suffix) as tmp:
-                    tmp.write(field.file.read())
+                with tempfile.NamedTemporaryFile(delete=False, suffix=pathlib.Path(orig_name or 'in').suffix) as tmp:
+                    tmp.write(file_bytes)
                     in_path = tmp.name
-                out_name = f"{uuid.uuid4().hex}.mp4"
-                out_path = TRANSCODE_DIR / out_name
+                out_path = _safe_output_path(orig_name)
                 # ffmpeg transcode to H.264 + AAC, faststart for progressive playback
+                input_args = _input_args_for(in_path)
                 try:
                     subprocess.run([
-                        'ffmpeg','-y','-i', in_path,
+                        'ffmpeg','-y', *input_args, '-i', in_path,
                         '-movflags','+faststart',
                         '-c:v','libx264','-profile:v','main','-pix_fmt','yuv420p','-preset','veryfast','-crf','23',
                         '-c:a','aac','-b:a','128k',
@@ -310,46 +429,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                payload = {"url": f"/transcoded/{out_name}"}
+                payload = {"url": f"/convert/{out_path.name}"}
                 if duration:
                     payload["duration"] = duration
                 self.wfile.write(json.dumps(payload).encode('utf-8'))
                 return
             except Exception as e:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "bad_request", "message": str(e)}).encode('utf-8'))
+                self._json_error(400, {"error": "bad_request", "message": str(e)})
                 return
 
         if parsed.path == "/api/transcode-start":
-            # Start async transcode with progress polling
-            ctype = self.headers.get('Content-Type', '')
-            if 'multipart/form-data' not in ctype:
-                self.send_error(400, "multipart/form-data required")
+            res = self._read_multipart_file()
+            if not res:
                 return
+            orig_name, file_bytes = res
             try:
-                import cgi
-                fs = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={
-                    'REQUEST_METHOD': 'POST',
-                    'CONTENT_TYPE': ctype,
-                })
-                field = fs['file'] if 'file' in fs else None
-                if not field or not getattr(field, 'file', None):
-                    self.send_error(400, "file field missing")
-                    return
-                with tempfile.NamedTemporaryFile(delete=False, suffix=pathlib.Path(field.filename or 'in').suffix) as tmp:
-                    tmp.write(field.file.read())
+                with tempfile.NamedTemporaryFile(delete=False, suffix=pathlib.Path(orig_name or 'in').suffix) as tmp:
+                    tmp.write(file_bytes)
                     in_path = tmp.name
-                out_name = f"{uuid.uuid4().hex}.mp4"
-                out_path = TRANSCODE_DIR / out_name
+                input_args = _input_args_for(in_path)
+                out_path = _safe_output_path(orig_name)
 
                 # Duration hint via ffprobe (best-effort)
                 duration_hint = None
                 try:
                     out = subprocess.run([
-                        'ffprobe','-v','quiet','-print_format','json','-show_format', in_path
+                        'ffprobe','-v','quiet','-print_format','json','-show_format', *input_args, in_path
                     ], capture_output=True, check=True)
                     info = json.loads(out.stdout.decode('utf-8','ignore'))
                     fmt = info.get('format') or {}
@@ -369,11 +474,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps({"job": job_id}).encode('utf-8'))
                 return
             except Exception as e:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "bad_request", "message": str(e)}).encode('utf-8'))
+                self._json_error(400, {"error": "bad_request", "message": str(e)})
                 return
 
         self.send_error(404, "not found")
