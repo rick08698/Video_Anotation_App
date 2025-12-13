@@ -17,11 +17,25 @@ ROOT = pathlib.Path(__file__).parent
 WEB = ROOT / "webapp"
 DATA = ROOT / "annotations"
 DATA.mkdir(exist_ok=True)
-TRANSCODE_DIR = WEB / "transcoded"
-TRANSCODE_DIR.mkdir(exist_ok=True)
+CONVERT_DIR = ROOT / "convert"
+CONVERT_DIR.mkdir(exist_ok=True)
 
 # In-memory job store for transcode progress
 JOBS = {}
+
+def _safe_output_path(orig_name: str) -> pathlib.Path:
+    """Build an mp4 output path in CONVERT_DIR using the source file name."""
+    stem = pathlib.Path(orig_name or "converted").stem or "converted"
+    candidate = CONVERT_DIR / f"{stem}.mp4"
+    if not candidate.exists():
+        return candidate
+    # Avoid clobbering; append numeric suffix
+    i = 1
+    while True:
+        cand = CONVERT_DIR / f"{stem}-{i}.mp4"
+        if not cand.exists():
+            return cand
+        i += 1
 
 def _input_args_for(path: str) -> list[str]:
     ext = pathlib.Path(path).suffix.lower()
@@ -90,7 +104,7 @@ def _run_transcode_job(job_id, in_path: str, out_path: pathlib.Path, duration_hi
                         break
         rc = proc.wait()
         if rc == 0:
-            job.update(status='done', url=f"/transcoded/{out_path.name}", progress=1.0)
+            job.update(status='done', url=f"/convert/{out_path.name}", progress=1.0)
         else:
             err = ''
             try:
@@ -254,9 +268,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(payload).encode('utf-8'))
             return
 
-        # serve transcoded files with Range support
+        # serve converted files with Range support
+        if parsed.path.startswith("/convert/"):
+            fs_path = CONVERT_DIR / pathlib.Path(parsed.path).name
+            self._serve_file_with_range(fs_path)
+            return
+        # backward compatibility for old /transcoded/ URLs: serve from convert dir
         if parsed.path.startswith("/transcoded/"):
-            fs_path = WEB / parsed.path.lstrip("/")
+            name = pathlib.Path(parsed.path).name
+            fs_path = CONVERT_DIR / name
+            if not fs_path.exists():
+                legacy = WEB / "transcoded" / name
+                fs_path = legacy
             self._serve_file_with_range(fs_path)
             return
 
@@ -361,8 +384,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=pathlib.Path(orig_name or 'in').suffix) as tmp:
                     tmp.write(file_bytes)
                     in_path = tmp.name
-                out_name = f"{uuid.uuid4().hex}.mp4"
-                out_path = TRANSCODE_DIR / out_name
+                out_path = _safe_output_path(orig_name)
                 # ffmpeg transcode to H.264 + AAC, faststart for progressive playback
                 input_args = _input_args_for(in_path)
                 try:
@@ -407,7 +429,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                payload = {"url": f"/transcoded/{out_name}"}
+                payload = {"url": f"/convert/{out_path.name}"}
                 if duration:
                     payload["duration"] = duration
                 self.wfile.write(json.dumps(payload).encode('utf-8'))
@@ -426,8 +448,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     tmp.write(file_bytes)
                     in_path = tmp.name
                 input_args = _input_args_for(in_path)
-                out_name = f"{uuid.uuid4().hex}.mp4"
-                out_path = TRANSCODE_DIR / out_name
+                out_path = _safe_output_path(orig_name)
 
                 # Duration hint via ffprobe (best-effort)
                 duration_hint = None
