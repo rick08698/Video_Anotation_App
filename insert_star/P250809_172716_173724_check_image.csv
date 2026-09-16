@@ -1,0 +1,2 @@
+﻿input_video,output_video,overlay_image,fps,width,height,frame_count,video_duration_sec,overlay_start_sec,overlay_duration_sec,overlay_end_sec,overlay_start_frame,overlay_end_frame,position,overlay_width_ratio,overlay_alpha,box_alpha,keep_audio_requested,audio_muxed
+convert/P250809_172716_173724.mp4,insert_star/P250809_172716_173724_check_image.mp4,check_images/star.png,25.0,800,600,7480,299.2,90.14439912223492,10.0,100.14439912223492,2254,2504,top-right,0.18,1.0,0.35,False,False

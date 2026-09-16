@@ -1,0 +1,21 @@
+{
+  "input_video": "convert/P250809_172716_173724.mp4",
+  "output_video": "insert_star/P250809_172716_173724_check_image.mp4",
+  "overlay_image": "check_images/star.png",
+  "fps": 25.0,
+  "width": 800,
+  "height": 600,
+  "frame_count": 7480,
+  "video_duration_sec": 299.2,
+  "overlay_start_sec": 90.14439912223492,
+  "overlay_duration_sec": 10.0,
+  "overlay_end_sec": 100.14439912223492,
+  "overlay_start_frame": 2254,
+  "overlay_end_frame": 2504,
+  "position": "top-right",
+  "overlay_width_ratio": 0.18,
+  "overlay_alpha": 1.0,
+  "box_alpha": 0.35,
+  "keep_audio_requested": false,
+  "audio_muxed": false
+}
